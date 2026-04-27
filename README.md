@@ -1,6 +1,6 @@
 # DMS Calendar Update Bot
 
-Monitors the [Dallas Makerspace calendar](https://calendar.dallasmakerspace.org) daily and sends new sessions to a Telegram chat. Designed to run on a Raspberry Pi via Docker and host cron.
+Monitors the [Dallas Makerspace calendar](https://calendar.dallasmakerspace.org) daily and sends new sessions to a Telegram chat. Designed to run on a Raspberry Pi via Docker.
 
 ## How it works
 
@@ -10,8 +10,7 @@ Each day the bot fetches the calendar RSS feed, compares it to yesterday's snaps
 
 ### 1. Prerequisites
 
-- Docker + Docker Compose
-- A Telegram bot token and chat ID (see below)
+- Docker + Docker Compose installed on your Raspberry Pi
 
 ### 2. Create a Telegram bot
 
@@ -52,31 +51,25 @@ notifications:
   on_error: true
 ```
 
-### 5. First run
+### 5. Start the bot
 
 ```bash
-# Create the data directory
 mkdir -p data
-
-# Run the bot once
-docker compose run --rm app
+docker compose up -d
 ```
 
-You should receive a Telegram message: *"✅ DMS Calendar Bot is running! Found N events..."*
+That's it. The container runs as a persistent daemon with an internal cron job — no host crontab setup needed. You should receive a Telegram message shortly: *"✅ DMS Calendar Bot is running! Found N events..."*
 
-### 6. Set up the daily cron job (Raspberry Pi)
+To update the schedule, edit `config.yml` and restart:
 
 ```bash
-chmod +x scripts/install_cron.sh
-./scripts/install_cron.sh
+docker compose restart
 ```
 
-This reads the time from `config.yml`, sets the system timezone, and installs the crontab entry. To update the schedule, edit `config.yml` and re-run the script.
-
-Verify it was installed:
+To view logs:
 
 ```bash
-crontab -l
+docker compose logs -f
 ```
 
 ## Local development
@@ -93,7 +86,7 @@ Run tests:
 pytest tests/ -v
 ```
 
-Run locally (without Docker):
+Run the bot locally (without Docker, fires immediately):
 
 ```bash
 cp .env.example .env  # fill in your credentials
@@ -112,10 +105,9 @@ src/
 tests/          — 55 tests covering all modules
 data/           — snapshot lives here (Docker volume, gitignored)
 config.yml      — schedule and notification settings
+entrypoint.sh   — builds the crontab from config.yml and starts supercronic
 docker-compose.yml
 Dockerfile
-scripts/
-  install_cron.sh — installs the host cron job from config.yml
 ```
 
 ## Simulating a new event (testing)
@@ -131,7 +123,8 @@ del s[list(s.keys())[0]]
 with open('data/snapshot.json', 'w') as f: json.dump(s, f, indent=2)
 "
 
-docker compose run --rm app
+# Trigger a manual run inside the running container
+docker compose exec app python -m src.main
 ```
 
 You should receive a Telegram message with one new event.

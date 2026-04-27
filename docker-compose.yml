@@ -11,7 +11,7 @@ services:
       - .env
     volumes:
       - ./data:/data
-    restart: "no"
+    restart: unless-stopped
     logging:
       driver: "json-file"
       options:
