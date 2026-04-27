@@ -1,0 +1,18 @@
+# Environment
+.env
+
+# Data volume (snapshot persisted here)
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Docker
+*.log

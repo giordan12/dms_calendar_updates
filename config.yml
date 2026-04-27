@@ -1,0 +1,7 @@
+schedule:
+  hour: 8           # Hour to run (24h, local time)
+  minute: 0         # Minute to run
+  timezone: "America/Chicago"  # Pi timezone (Dallas = Central)
+
+notifications:
+  on_error: true    # Send Telegram message on errors
