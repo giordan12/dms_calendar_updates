@@ -6,10 +6,8 @@ import traceback
 import requests
 
 from src.fetcher import FeedParseError, fetch_feed, parse_feed
-from src.notifier import send_error, send_message, send_new_events, build_startup_message
+from src.notifier import build_startup_message, send_error, send_message, send_new_events
 from src.storage import find_new_events, load_snapshot, save_snapshot
-
-import requests.sessions
 
 
 def setup_logging() -> None:
@@ -29,8 +27,7 @@ def get_required_env(name: str) -> str:
     return value
 
 
-def main() -> None:
-    setup_logging()
+def run() -> None:
     logger = logging.getLogger(__name__)
 
     bot_token = get_required_env("TELEGRAM_BOT_TOKEN")
@@ -45,7 +42,7 @@ def main() -> None:
             msg = f"Failed to fetch RSS feed: {exc}"
             logger.error(msg)
             send_error(bot_token, chat_id, msg)
-            sys.exit(1)
+            return
 
         logger.info("Parsing feed...")
         try:
@@ -54,7 +51,7 @@ def main() -> None:
             msg = f"Failed to parse RSS feed: {exc}"
             logger.error(msg)
             send_error(bot_token, chat_id, msg)
-            sys.exit(1)
+            return
 
         logger.info("Feed contains %d events", len(current_events))
 
@@ -79,13 +76,15 @@ def main() -> None:
         save_snapshot(current_events, snapshot_path)
         logger.info("Snapshot saved (%d events)", len(current_events))
 
-    except SystemExit:
-        raise
     except Exception as exc:
-        msg = f"Unexpected error: {exc}\n{traceback.format_exc()}"
-        logger.error(msg)
-        send_error(bot_token, chat_id, f"Unexpected error: {exc}")
-        sys.exit(1)
+        msg = f"Unexpected error: {exc}"
+        logger.error("%s\n%s", msg, traceback.format_exc())
+        send_error(get_required_env("TELEGRAM_BOT_TOKEN"), get_required_env("TELEGRAM_CHAT_ID"), msg)
+
+
+def main() -> None:
+    setup_logging()
+    run()
 
 
 if __name__ == "__main__":
