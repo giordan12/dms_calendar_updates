@@ -54,7 +54,6 @@ notifications:
 ### 5. Start the bot
 
 ```bash
-mkdir -p data
 docker compose up -d
 ```
 
