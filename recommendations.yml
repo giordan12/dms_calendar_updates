@@ -12,8 +12,7 @@ batch_size: 20             # classes scored per Jev request (one question per cl
 # categories are sent as the state). Edit to change who classes are recommended to.
 instructions: |
   I am interested in learning about ceramics, jewelry, anything that is related to
-  software or technology, and to participate in social activities where I can meet
-  new people.
+  software, and to participate in social activities where I can meet new people.
 
 criteria:
   "true": "Yes I should attend the class"
