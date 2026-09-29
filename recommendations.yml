@@ -10,11 +10,10 @@ max_description_chars: 1500
 # The noul question asked about each class (the class title, description, and
 # categories are sent as the state). Edit to change who classes are recommended to.
 instructions: |
-  Should this newly scheduled Dallas Makerspace class be recommended to a general
-  audience of hobbyists and makers? Recommend classes that are broadly useful,
-  beginner-accessible or clearly valuable, and that teach a practical making skill
-  or a safety certification.
+  I am interested in learning about ceramics, jewelry, anything that is related to
+  software or technology, and to participate in social activities where I can meet
+  new people.
 
 criteria:
-  "true": "Broadly useful, practical making skill or safety certification, accessible to hobbyists"
-  "false": "Vague, purely social, or extremely niche"
+  "true": "Yes I should attend the class"
+  "false": "No I shouldn't attend that class"
