@@ -1,13 +1,13 @@
 import logging
 import os
 
-import requests
 import yaml
+from typesafe_sdk import Noul, TypeSafeClient
 
 logger = logging.getLogger(__name__)
 
-JEV_URL = "https://api.typesafe.ai/v1/systemone"
 QUESTION_ID = "recommend_class"
+REQUEST_TIMEOUT_SECONDS = 30
 
 
 class RecommenderConfigError(Exception):
@@ -43,60 +43,35 @@ def build_class_state(event: dict, max_description_chars: int = 1500) -> dict:
     }
 
 
-def build_noul_question(config: dict) -> dict:
-    question = {"type": "noul", "instructions": config["instructions"].strip()}
-    if config.get("criteria"):
-        question["criteria"] = config["criteria"]
-    return question
-
-
-def parse_noul(body: dict) -> float:
-    try:
-        value = body["answers"][QUESTION_ID]["noul"]
-    except (KeyError, TypeError) as exc:
-        raise ValueError(f"No noul answer in Jev response: {body!r}") from exc
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(f"Invalid noul value in Jev response: {value!r}")
-    if not 0 <= value <= 1:
-        raise ValueError(f"noul out of range [0, 1]: {value}")
-    return float(value)
-
-
-def score_class(
-    event: dict, config: dict, api_key: str, session: requests.Session
-) -> float:
-    payload = {
-        "model": config["model"],
-        "state": build_class_state(event, config["max_description_chars"]),
-        "questions": {QUESTION_ID: build_noul_question(config)},
-    }
-    response = session.post(
-        JEV_URL,
-        json=payload,
-        headers={"Authorization": f"Bearer {api_key}"},
-        timeout=30,
+def build_noul_question(config: dict) -> Noul:
+    return Noul(
+        instructions=config["instructions"].strip(),
+        criteria=config.get("criteria"),
     )
-    response.raise_for_status()
-    return parse_noul(response.json())
+
+
+def score_class(event: dict, config: dict, client: TypeSafeClient) -> float:
+    response = client.system_one(
+        state=build_class_state(event, config["max_description_chars"]),
+        questions={QUESTION_ID: build_noul_question(config)},
+        model=config["model"],
+    )
+    return response.nouls[QUESTION_ID].noul
 
 
 def recommend_classes(
-    new_events: list[dict], config: dict, api_key: str
+    new_events: list[dict], config: dict, client: TypeSafeClient
 ) -> list[dict]:
-    classes = select_classes(new_events, config["class_category"])
     recommended = []
-    with requests.Session() as session:
-        for event in classes:
-            try:
-                probability = score_class(event, config, api_key, session)
-            except Exception as exc:
-                logger.warning(
-                    "Could not score class %r: %s", event.get("title"), exc
-                )
-                continue
-            logger.info("Class %r scored %.2f", event.get("title"), probability)
-            if probability > config["threshold"]:
-                recommended.append({**event, "yes_probability": probability})
+    for event in select_classes(new_events, config["class_category"]):
+        try:
+            probability = score_class(event, config, client)
+        except Exception as exc:
+            logger.warning("Could not score class %r: %s", event.get("title"), exc)
+            continue
+        logger.info("Class %r scored %.2f", event.get("title"), probability)
+        if probability > config["threshold"]:
+            recommended.append({**event, "yes_probability": probability})
     return recommended
 
 
@@ -116,7 +91,8 @@ def get_recommendations(
         logger.info("TYPESAFE_API_KEY not set — skipping recommendations")
         return []
     try:
-        return recommend_classes(new_events, config, api_key)
+        with TypeSafeClient(api_key=api_key, timeout=REQUEST_TIMEOUT_SECONDS) as client:
+            return recommend_classes(new_events, config, client)
     except Exception as exc:
         logger.warning("Recommendation step failed: %s", exc)
         return []

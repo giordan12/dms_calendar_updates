@@ -1,18 +1,19 @@
+import json
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import httpx2
 import pytest
-import requests
 import yaml
+from typesafe_sdk import Noul, RetryPolicy, TypeSafeClient, TypeSafeError, TypeSafeInternalServerError
 
 from src.recommender import (
-    JEV_URL,
     QUESTION_ID,
     RecommenderConfigError,
     build_class_state,
     build_noul_question,
     get_recommendations,
     load_recommender_config,
-    parse_noul,
     recommend_classes,
     score_class,
     select_classes,
@@ -39,18 +40,15 @@ def make_event(title="Laser Basics", categories=("Class",), description="Learn l
     }
 
 
-def jev_body(noul):
-    return {
-        "model": "jev-1.13.0",
-        "answers": {QUESTION_ID: {"type": "noul", "noul": noul}},
-        "usage": {"input_tokens": 1, "output_tokens": 1},
-    }
-
-
 def jev_response(noul):
-    resp = MagicMock()
-    resp.json.return_value = jev_body(noul)
-    return resp
+    """Stand-in for typesafe_sdk.SystemOneResponse."""
+    return SimpleNamespace(nouls={QUESTION_ID: SimpleNamespace(noul=noul)})
+
+
+def fake_client(*results):
+    client = MagicMock()
+    client.system_one.side_effect = list(results)
+    return client
 
 
 class TestLoadConfig:
@@ -114,118 +112,121 @@ class TestBuildClassState:
 
 class TestBuildNoulQuestion:
     def test_with_criteria(self):
-        assert build_noul_question(CONFIG) == {
-            "type": "noul",
-            "instructions": "Recommend this?",
-            "criteria": {"true": "good", "false": "bad"},
-        }
+        question = build_noul_question(CONFIG)
+        assert isinstance(question, Noul)
+        assert question.instructions == "Recommend this?"
+        assert question.criteria == {"true": "good", "false": "bad"}
 
     def test_without_criteria(self):
         config = {k: v for k, v in CONFIG.items() if k != "criteria"}
-        assert "criteria" not in build_noul_question(config)
-
-
-class TestParseNoul:
-    def test_valid(self):
-        assert parse_noul(jev_body(0.75)) == 0.75
-
-    def test_integer_bounds_accepted(self):
-        assert parse_noul(jev_body(1)) == 1.0
-        assert parse_noul(jev_body(0)) == 0.0
-
-    @pytest.mark.parametrize(
-        "body",
-        [
-            {},
-            {"answers": {}},
-            {"answers": {QUESTION_ID: {"type": "noul"}}},
-            {"answers": {QUESTION_ID: {"noul": "high"}}},
-            {"answers": {QUESTION_ID: {"noul": True}}},
-            {"answers": {QUESTION_ID: {"noul": 1.5}}},
-            {"answers": {QUESTION_ID: {"noul": -0.1}}},
-            {"answers": None},
-        ],
-    )
-    def test_invalid_raises(self, body):
-        with pytest.raises(ValueError):
-            parse_noul(body)
+        assert build_noul_question(config).criteria is None
 
 
 class TestScoreClass:
-    def test_sends_expected_request(self):
-        session = MagicMock()
-        session.post.return_value = jev_response(0.8)
-        result = score_class(make_event(), CONFIG, "key123", session)
-        assert result == 0.8
-        args, kwargs = session.post.call_args
-        assert args[0] == JEV_URL
-        assert kwargs["headers"]["Authorization"] == "Bearer key123"
-        body = kwargs["json"]
-        assert body["model"] == "jev-test"
-        assert body["state"]["title"] == "Laser Basics"
-        assert body["questions"][QUESTION_ID]["type"] == "noul"
-        assert body["questions"][QUESTION_ID]["instructions"] == "Recommend this?"
+    def test_calls_system_one_and_returns_noul(self):
+        client = fake_client(jev_response(0.8))
+        assert score_class(make_event(), CONFIG, client) == 0.8
+        _, kwargs = client.system_one.call_args
+        assert kwargs["model"] == "jev-test"
+        assert kwargs["state"]["title"] == "Laser Basics"
+        assert list(kwargs["questions"]) == [QUESTION_ID]
+        assert kwargs["questions"][QUESTION_ID].instructions == "Recommend this?"
 
-    def test_http_error_propagates(self):
-        session = MagicMock()
-        resp = MagicMock()
-        resp.raise_for_status.side_effect = requests.exceptions.HTTPError("500")
-        session.post.return_value = resp
-        with pytest.raises(requests.exceptions.HTTPError):
-            score_class(make_event(), CONFIG, "k", session)
+    def test_sdk_error_propagates(self):
+        client = MagicMock()
+        client.system_one.side_effect = TypeSafeError("boom")
+        with pytest.raises(TypeSafeError):
+            score_class(make_event(), CONFIG, client)
+
+
+class TestSdkContract:
+    """Runs the real SDK against a fake HTTP transport to pin the wire format."""
+
+    def _client(self, handler):
+        return TypeSafeClient(
+            api_key="key123",
+            transport=httpx2.MockTransport(handler),
+            retry=RetryPolicy(max_retries=0),
+        )
+
+    def test_request_shape_and_noul_parsing(self):
+        seen = {}
+
+        def handler(request):
+            seen["auth"] = request.headers["authorization"]
+            seen["url"] = str(request.url)
+            seen["body"] = json.loads(request.content)
+            return httpx2.Response(
+                200,
+                json={
+                    "model": "jev-1.13.0",
+                    "answers": {QUESTION_ID: {"type": "noul", "noul": 0.87}},
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                },
+            )
+
+        with self._client(handler) as client:
+            assert score_class(make_event(), CONFIG, client) == 0.87
+
+        assert seen["auth"] == "Bearer key123"
+        assert seen["url"].endswith("/v1/systemone")
+        assert seen["body"]["model"] == "jev-test"
+        assert seen["body"]["state"]["title"] == "Laser Basics"
+        question = seen["body"]["questions"][QUESTION_ID]
+        assert question["type"] == "noul"
+        assert question["instructions"] == "Recommend this?"
+        assert question["criteria"] == {"true": "good", "false": "bad"}
+
+    def test_server_error_raises_typesafe_error(self):
+        def handler(request):
+            return httpx2.Response(500, json={"error": "down"})
+
+        with self._client(handler) as client:
+            with pytest.raises(TypeSafeInternalServerError):
+                score_class(make_event(), CONFIG, client)
 
 
 class TestRecommendClasses:
-    def _run(self, events, responses):
-        session = MagicMock()
-        session.post.side_effect = responses
-        with patch("src.recommender.requests.Session") as cls:
-            cls.return_value.__enter__.return_value = session
-            result = recommend_classes(events, CONFIG, "k")
-        return result, session
-
     def test_only_above_threshold_recommended(self):
         events = [make_event("A"), make_event("B"), make_event("C")]
-        result, _ = self._run(
-            events, [jev_response(0.61), jev_response(0.6), jev_response(0.2)]
-        )
+        client = fake_client(jev_response(0.61), jev_response(0.6), jev_response(0.2))
+        result = recommend_classes(events, CONFIG, client)
         assert [e["title"] for e in result] == ["A"]
         assert result[0]["yes_probability"] == 0.61
 
     def test_threshold_is_strict(self):
-        result, _ = self._run([make_event()], [jev_response(0.6)])
-        assert result == []
+        client = fake_client(jev_response(0.6))
+        assert recommend_classes([make_event()], CONFIG, client) == []
 
     def test_non_classes_not_sent_to_jev(self):
         events = [make_event("A"), make_event("Tour", categories=["Event"])]
-        _, session = self._run(events, [jev_response(0.9)])
-        assert session.post.call_count == 1
+        client = fake_client(jev_response(0.9))
+        recommend_classes(events, CONFIG, client)
+        assert client.system_one.call_count == 1
 
     def test_one_call_per_class(self):
         events = [make_event(str(i)) for i in range(4)]
-        _, session = self._run(events, [jev_response(0.1)] * 4)
-        assert session.post.call_count == 4
+        client = fake_client(*[jev_response(0.1)] * 4)
+        recommend_classes(events, CONFIG, client)
+        assert client.system_one.call_count == 4
 
     def test_failed_class_skipped_others_continue(self):
         events = [make_event("A"), make_event("B")]
-        result, _ = self._run(
-            events, [requests.exceptions.ConnectionError("x"), jev_response(0.9)]
-        )
+        client = fake_client(TypeSafeError("x"), jev_response(0.9))
+        result = recommend_classes(events, CONFIG, client)
         assert [e["title"] for e in result] == ["B"]
 
-    def test_malformed_response_skipped(self):
-        bad = MagicMock()
-        bad.json.return_value = {"answers": {}}
-        result, _ = self._run([make_event()], [bad])
-        assert result == []
+    def test_missing_answer_skipped(self):
+        client = fake_client(SimpleNamespace(nouls={}))
+        assert recommend_classes([make_event()], CONFIG, client) == []
 
 
 class TestGetRecommendations:
     def test_no_api_key_skips(self, monkeypatch):
         monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
-        with patch("src.recommender.recommend_classes") as rc:
+        with patch("src.recommender.TypeSafeClient") as client_cls:
             assert get_recommendations([make_event()], "recommendations.yml") == []
-        rc.assert_not_called()
+        client_cls.assert_not_called()
 
     def test_disabled_skips(self, monkeypatch, tmp_path):
         monkeypatch.setenv("TYPESAFE_API_KEY", "k")
@@ -235,21 +236,25 @@ class TestGetRecommendations:
                 {"model": "m", "instructions": "i", "threshold": 0.5, "enabled": False}
             )
         )
-        with patch("src.recommender.recommend_classes") as rc:
+        with patch("src.recommender.TypeSafeClient") as client_cls:
             assert get_recommendations([make_event()], str(path)) == []
-        rc.assert_not_called()
+        client_cls.assert_not_called()
 
     def test_bad_config_returns_empty(self, monkeypatch, tmp_path):
         monkeypatch.setenv("TYPESAFE_API_KEY", "k")
         assert get_recommendations([make_event()], str(tmp_path / "nope.yml")) == []
 
-    def test_uses_env_key_and_returns_results(self, monkeypatch):
+    def test_builds_client_with_env_key_and_returns_results(self, monkeypatch):
         monkeypatch.setenv("TYPESAFE_API_KEY", "secret")
-        with patch("src.recommender.recommend_classes", return_value=["r"]) as rc:
-            assert get_recommendations([make_event()], "recommendations.yml") == ["r"]
-        assert rc.call_args[0][2] == "secret"
+        with patch("src.recommender.TypeSafeClient") as client_cls:
+            client_cls.return_value.__enter__.return_value = fake_client(
+                jev_response(0.9)
+            )
+            result = get_recommendations([make_event()], "recommendations.yml")
+        assert [e["title"] for e in result] == ["Laser Basics"]
+        assert client_cls.call_args.kwargs["api_key"] == "secret"
 
     def test_unexpected_failure_returns_empty(self, monkeypatch):
         monkeypatch.setenv("TYPESAFE_API_KEY", "k")
-        with patch("src.recommender.recommend_classes", side_effect=RuntimeError):
+        with patch("src.recommender.TypeSafeClient", side_effect=RuntimeError):
             assert get_recommendations([make_event()], "recommendations.yml") == []
