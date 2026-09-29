@@ -6,7 +6,14 @@ import traceback
 import requests
 
 from src.fetcher import FeedParseError, fetch_feed, parse_feed
-from src.notifier import build_startup_message, send_error, send_message, send_new_events
+from src.notifier import (
+    build_startup_message,
+    send_error,
+    send_message,
+    send_new_events,
+    send_recommendations,
+)
+from src.recommender import get_recommendations
 from src.storage import find_new_events, load_snapshot, save_snapshot
 
 
@@ -70,6 +77,9 @@ def run() -> None:
             )
             if new_events:
                 send_new_events(bot_token, chat_id, new_events)
+                recommended = get_recommendations(new_events)
+                logger.info("Recommended %d classes", len(recommended))
+                send_recommendations(bot_token, chat_id, recommended)
             else:
                 logger.info("No new events — nothing to send")
 

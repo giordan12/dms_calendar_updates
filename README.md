@@ -51,7 +51,15 @@ notifications:
   on_error: true
 ```
 
-### 5. Start the bot
+### 5. (Optional) Class recommendations
+
+If `ANTHROPIC_API_KEY` is set in `.env`, each new event in the `Class` category is sent
+(title, description, categories) to Claude, which returns a `yes_probability`. Classes
+above the threshold are sent as a separate "Recommended Classes" Telegram message.
+The prompt, model, threshold, and category live in the tracked `recommendations.yml`.
+Without the key, or with `enabled: false`, this step is skipped.
+
+### 6. Start the bot
 
 ```bash
 docker compose up -d

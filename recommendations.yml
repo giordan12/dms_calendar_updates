@@ -1,0 +1,23 @@
+# Settings for LLM-based class recommendations (tracked in git).
+# Requires ANTHROPIC_API_KEY in the environment; without it, recommendations are skipped.
+
+enabled: true
+model: claude-haiku-4-5-20251001
+max_tokens: 100
+threshold: 0.60            # recommend a class when P(yes) is strictly greater than this
+class_category: "Class"    # only events with this category are evaluated
+max_description_chars: 1500
+
+# Sent as the system prompt for every class. Edit this to change who the classes are recommended to.
+instructions: |
+  You help members of the Dallas Makerspace decide which newly scheduled classes are
+  worth recommending to a general audience of hobbyists and makers.
+
+  You will be given a class title, description, and categories. Decide whether this
+  class should be recommended: it should be broadly useful, beginner-accessible or
+  clearly valuable, and teach a practical making skill or safety certification.
+  Do not recommend classes that are vague, purely social, or extremely niche.
+
+  Respond with ONLY a JSON object, no other text:
+  {"yes_probability": <number between 0 and 1>}
+  where yes_probability is your confidence that the class should be recommended.
