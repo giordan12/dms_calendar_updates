@@ -4,7 +4,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from scripts import sample_recommendations as script
-from src.recommender import QUESTION_ID
 
 
 def make_events(n_classes, n_other=3):
@@ -25,8 +24,20 @@ def make_events(n_classes, n_other=3):
     return other + classes
 
 
-def jev_response(noul):
-    return SimpleNamespace(nouls={QUESTION_ID: SimpleNamespace(noul=noul)})
+def fake_client(scores_by_title, default=0.1):
+    def system_one(*, state, questions, model):
+        return SimpleNamespace(
+            nouls={
+                key: SimpleNamespace(
+                    noul=scores_by_title.get(state["classes"][key]["title"], default)
+                )
+                for key in questions
+            }
+        )
+
+    client = MagicMock()
+    client.system_one.side_effect = system_one
+    return client
 
 
 class TestSampleClasses:
@@ -59,9 +70,8 @@ class TestMain:
     def _key(self, monkeypatch):
         monkeypatch.setenv("TYPESAFE_API_KEY", "k")
 
-    def _run(self, events, scores, argv=("--seed", "1")):
-        client = MagicMock()
-        client.system_one.side_effect = [jev_response(s) for s in scores]
+    def _run(self, events, scores_by_title, argv=("--seed", "1")):
+        client = fake_client(scores_by_title)
         with patch("scripts.sample_recommendations.fetch_feed", return_value="<xml/>"), \
              patch("scripts.sample_recommendations.parse_feed", return_value=events), \
              patch("scripts.sample_recommendations.TypeSafeClient") as client_cls:
@@ -70,10 +80,12 @@ class TestMain:
         return code, client, client_cls
 
     def test_prints_only_recommended_sorted_by_score(self, capsys):
-        code, client, client_cls = self._run(make_events(3), [0.7, 0.2, 0.9])
+        scores = {"Class 0": 0.7, "Class 1": 0.2, "Class 2": 0.9}
+        code, client, client_cls = self._run(make_events(3), scores)
         out = capsys.readouterr().out
         assert code == 0
-        assert client.system_one.call_count == 3
+        assert client.system_one.call_count == 1  # whole sample scored in one request
+        assert len(client.system_one.call_args.kwargs["questions"]) == 3
         assert client_cls.call_args.kwargs["api_key"] == "k"
         assert "Recommended (noul > 0.6): 2 of 3" in out
         recommended_section = out.split("Recommended (noul")[1]
@@ -81,11 +93,11 @@ class TestMain:
         assert "0.20" not in recommended_section
 
     def test_respects_count(self):
-        _, client, _ = self._run(make_events(30), [0.1] * 5, argv=("--count", "5"))
-        assert client.system_one.call_count == 5
+        _, client, _ = self._run(make_events(30), {}, argv=("--count", "5"))
+        assert len(client.system_one.call_args.kwargs["questions"]) == 5
 
     def test_no_classes_makes_no_calls(self, capsys):
-        code, client, _ = self._run(make_events(0), [])
+        code, client, _ = self._run(make_events(0), {})
         assert code == 0
         client.system_one.assert_not_called()
         assert "Sampled 0 of 0" in capsys.readouterr().out

@@ -6,6 +6,7 @@ enabled: true
 model: jev-1.13.0          # pinned version; "jev-latest" would track new releases automatically
 threshold: 0.60            # recommend a class when the noul (P(yes)) is strictly greater than this
 max_description_chars: 1500
+batch_size: 20             # classes scored per Jev request (one question per class, shared state)
 
 # The noul question asked about each class (the class title, description, and
 # categories are sent as the state). Edit to change who classes are recommended to.

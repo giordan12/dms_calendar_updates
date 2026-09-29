@@ -53,7 +53,7 @@ def main(argv: list[str] | None = None) -> int:
         print(exc, file=sys.stderr)
         return 1
 
-    # Per-class scores and any per-class failures are logged by the recommender.
+    # Per-class scores and any batch failures are logged by the recommender.
     logging.basicConfig(stream=sys.stdout, level=logging.INFO, format="%(message)s")
 
     events = parse_feed(fetch_feed())

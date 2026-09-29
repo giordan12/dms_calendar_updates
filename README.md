@@ -67,8 +67,8 @@ Telegram, sample some classes and print the recommended ones:
 TYPESAFE_API_KEY=... python -m scripts.sample_recommendations --count 20
 ```
 
-Each sampled class's score is printed as it comes back, followed by the ones above the
-threshold. Add `--seed N` for a repeatable sample.
+The sample is scored in a single batched Jev request; each class's score is printed,
+followed by the ones above the threshold. Add `--seed N` for a repeatable sample.
 
 ### 6. Start the bot
 
