@@ -1,4 +1,3 @@
-import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -6,12 +5,14 @@ import requests
 import yaml
 
 from src.recommender import (
-    ANTHROPIC_URL,
+    JEV_URL,
+    QUESTION_ID,
     RecommenderConfigError,
-    build_class_prompt,
+    build_class_state,
+    build_noul_question,
     get_recommendations,
     load_recommender_config,
-    parse_yes_probability,
+    parse_noul,
     recommend_classes,
     score_class,
     select_classes,
@@ -19,12 +20,12 @@ from src.recommender import (
 
 CONFIG = {
     "enabled": True,
-    "model": "test-model",
-    "max_tokens": 50,
+    "model": "jev-test",
     "threshold": 0.6,
     "class_category": "Class",
     "max_description_chars": 20,
-    "instructions": "Be a judge.",
+    "instructions": "Recommend this?\n",
+    "criteria": {"true": "good", "false": "bad"},
 }
 
 
@@ -38,13 +39,17 @@ def make_event(title="Laser Basics", categories=("Class",), description="Learn l
     }
 
 
-def api_response(probability):
-    resp = MagicMock()
-    resp.json.return_value = {
-        "content": [
-            {"type": "text", "text": json.dumps({"yes_probability": probability})}
-        ]
+def jev_body(noul):
+    return {
+        "model": "jev-1.13.0",
+        "answers": {QUESTION_ID: {"type": "noul", "noul": noul}},
+        "usage": {"input_tokens": 1, "output_tokens": 1},
     }
+
+
+def jev_response(noul):
+    resp = MagicMock()
+    resp.json.return_value = jev_body(noul)
     return resp
 
 
@@ -53,7 +58,7 @@ class TestLoadConfig:
         config = load_recommender_config("recommendations.yml")
         assert config["instructions"].strip()
         assert 0 < config["threshold"] < 1
-        assert config["model"]
+        assert config["model"].startswith("jev")
 
     def test_defaults_applied(self, tmp_path):
         path = tmp_path / "r.yml"
@@ -88,62 +93,78 @@ class TestSelectClasses:
         assert select_classes([{"title": "x"}], "Class") == []
 
 
-class TestBuildClassPrompt:
+class TestBuildClassState:
     def test_includes_title_description_categories(self):
-        prompt = build_class_prompt(make_event(categories=["Class", "Laser"]))
-        assert "Laser Basics" in prompt
-        assert "Learn lasers" in prompt
-        assert "Class, Laser" in prompt
+        state = build_class_state(make_event(categories=["Class", "Laser"]))
+        assert state == {
+            "title": "Laser Basics",
+            "categories": ["Class", "Laser"],
+            "description": "Learn lasers",
+        }
 
     def test_truncates_description(self):
-        prompt = build_class_prompt(make_event(description="x" * 100), 10)
-        assert "x" * 10 in prompt
-        assert "x" * 11 not in prompt
+        state = build_class_state(make_event(description="x" * 100), 10)
+        assert state["description"] == "x" * 10
 
-    def test_empty_description_placeholder(self):
-        assert "(none)" in build_class_prompt(make_event(description=""))
+    def test_missing_description(self):
+        event = make_event()
+        del event["description"]
+        assert build_class_state(event)["description"] == ""
 
 
-class TestParseYesProbability:
-    def test_plain_json(self):
-        assert parse_yes_probability('{"yes_probability": 0.75}') == 0.75
+class TestBuildNoulQuestion:
+    def test_with_criteria(self):
+        assert build_noul_question(CONFIG) == {
+            "type": "noul",
+            "instructions": "Recommend this?",
+            "criteria": {"true": "good", "false": "bad"},
+        }
 
-    def test_json_with_surrounding_text(self):
-        assert parse_yes_probability('Sure: {"yes_probability": 0.9} ok') == 0.9
+    def test_without_criteria(self):
+        config = {k: v for k, v in CONFIG.items() if k != "criteria"}
+        assert "criteria" not in build_noul_question(config)
+
+
+class TestParseNoul:
+    def test_valid(self):
+        assert parse_noul(jev_body(0.75)) == 0.75
 
     def test_integer_bounds_accepted(self):
-        assert parse_yes_probability('{"yes_probability": 1}') == 1.0
-        assert parse_yes_probability('{"yes_probability": 0}') == 0.0
+        assert parse_noul(jev_body(1)) == 1.0
+        assert parse_noul(jev_body(0)) == 0.0
 
     @pytest.mark.parametrize(
-        "text",
+        "body",
         [
-            "no json here",
-            '{"other": 1}',
-            '{"yes_probability": "high"}',
-            '{"yes_probability": true}',
-            '{"yes_probability": 1.5}',
-            '{"yes_probability": -0.1}',
+            {},
+            {"answers": {}},
+            {"answers": {QUESTION_ID: {"type": "noul"}}},
+            {"answers": {QUESTION_ID: {"noul": "high"}}},
+            {"answers": {QUESTION_ID: {"noul": True}}},
+            {"answers": {QUESTION_ID: {"noul": 1.5}}},
+            {"answers": {QUESTION_ID: {"noul": -0.1}}},
+            {"answers": None},
         ],
     )
-    def test_invalid_raises(self, text):
-        with pytest.raises((ValueError, json.JSONDecodeError)):
-            parse_yes_probability(text)
+    def test_invalid_raises(self, body):
+        with pytest.raises(ValueError):
+            parse_noul(body)
 
 
 class TestScoreClass:
     def test_sends_expected_request(self):
         session = MagicMock()
-        session.post.return_value = api_response(0.8)
+        session.post.return_value = jev_response(0.8)
         result = score_class(make_event(), CONFIG, "key123", session)
         assert result == 0.8
         args, kwargs = session.post.call_args
-        assert args[0] == ANTHROPIC_URL
-        assert kwargs["headers"]["x-api-key"] == "key123"
-        assert kwargs["json"]["model"] == "test-model"
-        assert kwargs["json"]["system"] == "Be a judge."
-        assert kwargs["json"]["max_tokens"] == 50
-        assert "Laser Basics" in kwargs["json"]["messages"][0]["content"]
+        assert args[0] == JEV_URL
+        assert kwargs["headers"]["Authorization"] == "Bearer key123"
+        body = kwargs["json"]
+        assert body["model"] == "jev-test"
+        assert body["state"]["title"] == "Laser Basics"
+        assert body["questions"][QUESTION_ID]["type"] == "noul"
+        assert body["questions"][QUESTION_ID]["instructions"] == "Recommend this?"
 
     def test_http_error_propagates(self):
         session = MagicMock()
@@ -155,9 +176,9 @@ class TestScoreClass:
 
 
 class TestRecommendClasses:
-    def _run(self, events, probabilities):
+    def _run(self, events, responses):
         session = MagicMock()
-        session.post.side_effect = probabilities
+        session.post.side_effect = responses
         with patch("src.recommender.requests.Session") as cls:
             cls.return_value.__enter__.return_value = session
             result = recommend_classes(events, CONFIG, "k")
@@ -166,48 +187,48 @@ class TestRecommendClasses:
     def test_only_above_threshold_recommended(self):
         events = [make_event("A"), make_event("B"), make_event("C")]
         result, _ = self._run(
-            events, [api_response(0.61), api_response(0.6), api_response(0.2)]
+            events, [jev_response(0.61), jev_response(0.6), jev_response(0.2)]
         )
         assert [e["title"] for e in result] == ["A"]
         assert result[0]["yes_probability"] == 0.61
 
     def test_threshold_is_strict(self):
-        result, _ = self._run([make_event()], [api_response(0.6)])
+        result, _ = self._run([make_event()], [jev_response(0.6)])
         assert result == []
 
-    def test_non_classes_not_sent_to_llm(self):
+    def test_non_classes_not_sent_to_jev(self):
         events = [make_event("A"), make_event("Tour", categories=["Event"])]
-        _, session = self._run(events, [api_response(0.9)])
+        _, session = self._run(events, [jev_response(0.9)])
         assert session.post.call_count == 1
 
     def test_one_call_per_class(self):
         events = [make_event(str(i)) for i in range(4)]
-        _, session = self._run(events, [api_response(0.1)] * 4)
+        _, session = self._run(events, [jev_response(0.1)] * 4)
         assert session.post.call_count == 4
 
     def test_failed_class_skipped_others_continue(self):
         events = [make_event("A"), make_event("B")]
         result, _ = self._run(
-            events, [requests.exceptions.ConnectionError("x"), api_response(0.9)]
+            events, [requests.exceptions.ConnectionError("x"), jev_response(0.9)]
         )
         assert [e["title"] for e in result] == ["B"]
 
     def test_malformed_response_skipped(self):
         bad = MagicMock()
-        bad.json.return_value = {"content": [{"type": "text", "text": "maybe?"}]}
+        bad.json.return_value = {"answers": {}}
         result, _ = self._run([make_event()], [bad])
         assert result == []
 
 
 class TestGetRecommendations:
     def test_no_api_key_skips(self, monkeypatch):
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
         with patch("src.recommender.recommend_classes") as rc:
             assert get_recommendations([make_event()], "recommendations.yml") == []
         rc.assert_not_called()
 
     def test_disabled_skips(self, monkeypatch, tmp_path):
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+        monkeypatch.setenv("TYPESAFE_API_KEY", "k")
         path = tmp_path / "r.yml"
         path.write_text(
             yaml.dump(
@@ -219,16 +240,16 @@ class TestGetRecommendations:
         rc.assert_not_called()
 
     def test_bad_config_returns_empty(self, monkeypatch, tmp_path):
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+        monkeypatch.setenv("TYPESAFE_API_KEY", "k")
         assert get_recommendations([make_event()], str(tmp_path / "nope.yml")) == []
 
     def test_uses_env_key_and_returns_results(self, monkeypatch):
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "secret")
+        monkeypatch.setenv("TYPESAFE_API_KEY", "secret")
         with patch("src.recommender.recommend_classes", return_value=["r"]) as rc:
             assert get_recommendations([make_event()], "recommendations.yml") == ["r"]
         assert rc.call_args[0][2] == "secret"
 
     def test_unexpected_failure_returns_empty(self, monkeypatch):
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+        monkeypatch.setenv("TYPESAFE_API_KEY", "k")
         with patch("src.recommender.recommend_classes", side_effect=RuntimeError):
             assert get_recommendations([make_event()], "recommendations.yml") == []
