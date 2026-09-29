@@ -57,7 +57,7 @@ If `TYPESAFE_API_KEY` is set in `.env`, each new event in the `Class` category i
 (title, description, categories) to [TypeSafe's Jev](https://docs.typesafe.ai/api) as a
 noul (yes/no probability) question. Classes with a noul above the threshold (0.60) are
 sent as a separate "Recommended Classes" Telegram message.
-The instructions, model, threshold, and category live in the tracked `recommendations.yml`.
+The instructions, pinned model version, and threshold live in the tracked `recommendations.yml`.
 Without the key, or with `enabled: false`, this step is skipped.
 
 ### 6. Start the bot

@@ -6,6 +6,7 @@ from typesafe_sdk import Noul, TypeSafeClient
 
 logger = logging.getLogger(__name__)
 
+CLASS_CATEGORY = "Class"
 QUESTION_ID = "recommend_class"
 REQUEST_TIMEOUT_SECONDS = 30
 
@@ -24,13 +25,12 @@ def load_recommender_config(path: str = "recommendations.yml") -> dict:
         if key not in data:
             raise RecommenderConfigError(f"{path} is missing required key '{key}'")
     data.setdefault("enabled", True)
-    data.setdefault("class_category", "Class")
     data.setdefault("max_description_chars", 1500)
     return data
 
 
-def select_classes(events: list[dict], category: str) -> list[dict]:
-    return [e for e in events if category in e.get("categories", [])]
+def select_classes(events: list[dict]) -> list[dict]:
+    return [e for e in events if CLASS_CATEGORY in e.get("categories", [])]
 
 
 def build_class_state(event: dict, max_description_chars: int = 1500) -> dict:
@@ -63,7 +63,7 @@ def recommend_classes(
     new_events: list[dict], config: dict, client: TypeSafeClient
 ) -> list[dict]:
     recommended = []
-    for event in select_classes(new_events, config["class_category"]):
+    for event in select_classes(new_events):
         try:
             probability = score_class(event, config, client)
         except Exception as exc:

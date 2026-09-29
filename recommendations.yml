@@ -3,9 +3,8 @@
 # Jev API: POST https://api.typesafe.ai/v1/systemone (https://docs.typesafe.ai/api)
 
 enabled: true
-model: jev-latest
+model: jev-1.13.0          # pinned version; "jev-latest" would track new releases automatically
 threshold: 0.60            # recommend a class when the noul (P(yes)) is strictly greater than this
-class_category: "Class"    # only events with this category are evaluated
 max_description_chars: 1500
 
 # The noul question asked about each class (the class title, description, and

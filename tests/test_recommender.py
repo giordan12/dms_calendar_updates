@@ -23,7 +23,6 @@ CONFIG = {
     "enabled": True,
     "model": "jev-test",
     "threshold": 0.6,
-    "class_category": "Class",
     "max_description_chars": 20,
     "instructions": "Recommend this?\n",
     "criteria": {"true": "good", "false": "bad"},
@@ -56,14 +55,15 @@ class TestLoadConfig:
         config = load_recommender_config("recommendations.yml")
         assert config["instructions"].strip()
         assert 0 < config["threshold"] < 1
-        assert config["model"].startswith("jev")
+        assert config["model"].startswith("jev-")
+        assert config["model"] != "jev-latest"  # pinned to a specific version
 
     def test_defaults_applied(self, tmp_path):
         path = tmp_path / "r.yml"
         path.write_text(yaml.dump({"model": "m", "instructions": "i", "threshold": 0.5}))
         config = load_recommender_config(str(path))
         assert config["enabled"] is True
-        assert config["class_category"] == "Class"
+        assert config["max_description_chars"] == 1500
 
     def test_missing_file_raises(self, tmp_path):
         with pytest.raises(RecommenderConfigError):
@@ -85,10 +85,10 @@ class TestLoadConfig:
 class TestSelectClasses:
     def test_keeps_only_class_category(self):
         events = [make_event("A"), make_event("B", categories=["Event"])]
-        assert [e["title"] for e in select_classes(events, "Class")] == ["A"]
+        assert [e["title"] for e in select_classes(events)] == ["A"]
 
     def test_handles_missing_categories(self):
-        assert select_classes([{"title": "x"}], "Class") == []
+        assert select_classes([{"title": "x"}]) == []
 
 
 class TestBuildClassState:
