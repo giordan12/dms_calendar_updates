@@ -36,6 +36,12 @@ def extract_when(description_html: str) -> str:
     return " ".join(cell.split())
 
 
+def extract_description(description_html: str) -> str:
+    unescaped = html.unescape(description_html)
+    text = _INNER_TAGS.sub(" ", unescaped)
+    return " ".join(text.split())
+
+
 def parse_feed(xml_text: str) -> list[dict]:
     try:
         root = ET.fromstring(xml_text)
@@ -70,6 +76,7 @@ def parse_feed(xml_text: str) -> list[dict]:
                 "title": title,
                 "link": link,
                 "when": extract_when(description),
+                "description": extract_description(description),
                 "pub_date": pub_date,
                 "categories": categories,
             }

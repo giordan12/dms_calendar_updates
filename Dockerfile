@@ -6,7 +6,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src/ ./src/
-COPY config.yml .
+COPY config.yml recommendations.yml ./
 
 RUN mkdir -p /data && chmod 777 /data
 

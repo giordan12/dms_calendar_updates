@@ -7,11 +7,13 @@ from src.notifier import (
     MAX_MESSAGE_CHARS,
     TelegramError,
     build_messages,
+    build_recommendation_messages,
     build_startup_message,
     format_event_line,
     send_error,
     send_message,
     send_new_events,
+    send_recommendations,
 )
 
 SAMPLE_EVENT = {
@@ -185,3 +187,38 @@ class TestSendNewEvents:
                 with patch("src.notifier.time.sleep"):
                     send_new_events("token", "chat_id", events)
         assert mock_send.call_count == expected_chunks
+
+
+class TestBuildRecommendationMessages:
+    def test_empty_returns_empty_list(self):
+        assert build_recommendation_messages([]) == []
+
+    def test_header_and_count(self):
+        chunks = build_recommendation_messages(make_events(3))
+        assert len(chunks) == 1
+        assert "Recommended Classes" in chunks[0]
+        assert "(3)" in chunks[0]
+
+    def test_contains_event_lines(self):
+        chunks = build_recommendation_messages([SAMPLE_EVENT])
+        assert format_event_line(SAMPLE_EVENT) in chunks[0]
+
+    def test_chunks_under_limit_with_continuation(self):
+        chunks = build_recommendation_messages(make_events(200, title_prefix="A" * 50))
+        assert len(chunks) > 1
+        assert all(len(c) <= MAX_MESSAGE_CHARS for c in chunks)
+        assert "cont." in chunks[1]
+
+
+class TestSendRecommendations:
+    def test_empty_never_sends(self):
+        with patch("src.notifier.send_message") as mock_send:
+            send_recommendations("token", "chat_id", [])
+        mock_send.assert_not_called()
+
+    def test_sends_separate_recommendation_message(self):
+        with patch("src.notifier.send_message") as mock_send:
+            with patch("src.notifier.requests.Session"):
+                send_recommendations("token", "chat_id", make_events(2))
+        assert mock_send.call_count == 1
+        assert "Recommended Classes" in mock_send.call_args[0][2]

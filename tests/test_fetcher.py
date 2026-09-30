@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from src.fetcher import FeedParseError, extract_when, fetch_feed, parse_feed
+from src.fetcher import FeedParseError, extract_description, extract_when, fetch_feed, parse_feed
 
 SAMPLE_RSS_XML = """\
 <?xml version="1.0" encoding="utf-8"?>
@@ -158,3 +158,19 @@ class TestFetchFeed:
         with patch("src.fetcher.requests.get", return_value=mock_response):
             with pytest.raises(requests.exceptions.HTTPError):
                 fetch_feed("http://example.com")
+
+
+class TestExtractDescription:
+    def test_strips_tags_and_unescapes(self):
+        assert (
+            extract_description(DESCRIPTION_WITH_WHEN)
+            == "When Mon Apr 27 10am — 4pm Central"
+        )
+
+    def test_empty(self):
+        assert extract_description("") == ""
+
+    def test_parse_feed_includes_description(self):
+        events = parse_feed(SAMPLE_RSS_XML)
+        assert "Mon Apr 27" in events[0]["description"]
+        assert events[2]["description"] == ""

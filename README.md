@@ -51,7 +51,29 @@ notifications:
   on_error: true
 ```
 
-### 5. Start the bot
+### 5. (Optional) Class recommendations
+
+If `TYPESAFE_API_KEY` is set in `.env`, each new event in the `Class` category is sent
+(title, description, categories) to [TypeSafe's Jev](https://docs.typesafe.ai/api) as a
+noul (yes/no probability) question. Classes with a noul above the threshold (0.60) are
+sent as a separate "Recommended Classes" Telegram message.
+The instructions, pinned model version, and threshold live in the tracked `recommendations.yml`.
+Without the key, or with `enabled: false`, this step is skipped.
+
+To check the Jev integration without sending anything to Telegram, sample some classes
+and print the recommended ones:
+
+```bash
+TYPESAFE_API_KEY=... python -m scripts.sample_recommendations --count 20
+```
+
+By default the classes come from the stored snapshot `scripts/stored_classes.json`, so
+repeated runs don't query the DMS site. Add `--live` to pull the current classes from
+the site instead (the stored file is left as is), and `--seed N` for a repeatable
+sample. The sample is scored in a single batched Jev request; each class's score is
+printed, followed by the ones above the threshold.
+
+### 6. Start the bot
 
 ```bash
 docker compose up -d

@@ -56,6 +56,32 @@ def build_messages(new_events: list[dict]) -> list[str]:
     return chunks
 
 
+def build_recommendation_messages(recommended: list[dict]) -> list[str]:
+    if not recommended:
+        return []
+
+    header = f"⭐ *Recommended Classes* ({len(recommended)})\n\n"
+    continuation = "⭐ *Recommended Classes* (cont.)\n\n"
+
+    chunks = []
+    current_header = header
+    current_chunk = current_header
+
+    for event in recommended:
+        line = format_event_line(event) + "\n"
+        if len(current_chunk) + len(line) > MAX_MESSAGE_CHARS:
+            chunks.append(current_chunk.rstrip())
+            current_header = continuation
+            current_chunk = current_header + line
+        else:
+            current_chunk += line
+
+    if current_chunk.strip() != current_header.strip():
+        chunks.append(current_chunk.rstrip())
+
+    return chunks
+
+
 def send_message(
     bot_token: str, chat_id: str, text: str, session: requests.Session
 ) -> None:
@@ -82,10 +108,7 @@ def send_error(bot_token: str, chat_id: str, error_msg: str) -> None:
         logger.error("Failed to send error notification to Telegram: %s", exc)
 
 
-def send_new_events(
-    bot_token: str, chat_id: str, new_events: list[dict]
-) -> None:
-    chunks = build_messages(new_events)
+def _send_chunks(bot_token: str, chat_id: str, chunks: list[str]) -> None:
     if not chunks:
         return
     with requests.Session() as session:
@@ -93,3 +116,15 @@ def send_new_events(
             send_message(bot_token, chat_id, chunk, session)
             if i < len(chunks) - 1:
                 time.sleep(0.1)
+
+
+def send_new_events(
+    bot_token: str, chat_id: str, new_events: list[dict]
+) -> None:
+    _send_chunks(bot_token, chat_id, build_messages(new_events))
+
+
+def send_recommendations(
+    bot_token: str, chat_id: str, recommended: list[dict]
+) -> None:
+    _send_chunks(bot_token, chat_id, build_recommendation_messages(recommended))
