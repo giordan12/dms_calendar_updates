@@ -1,16 +1,22 @@
 """Manual live check of the Jev integration (not part of the pytest suite).
 
-Loads the classes from the real DMS schedule, samples some, scores them with Jev,
-and prints the recommended ones to stdout instead of sending them to Telegram.
+Samples some classes, scores them with Jev, and prints the recommended ones to
+stdout instead of sending them to Telegram.
 
-    TYPESAFE_API_KEY=... python -m scripts.sample_recommendations [--count 20] [--seed 1]
+By default the classes come from a pre-stored JSON file, so repeated runs don't
+query the DMS site. Pass --live to pull the current classes from the site
+instead; that also refreshes the stored file.
+
+    TYPESAFE_API_KEY=... python -m scripts.sample_recommendations [--live] [--count 20] [--seed 1]
 """
 
 import argparse
+import json
 import logging
 import os
 import random
 import sys
+from pathlib import Path
 
 from typesafe_sdk import TypeSafeClient
 
@@ -22,6 +28,19 @@ from src.recommender import (
     recommend_classes,
     select_classes,
 )
+
+STORED_CLASSES_PATH = Path(__file__).with_name("stored_classes.json")
+
+
+def load_stored_classes(path: Path) -> list[dict]:
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def save_stored_classes(classes: list[dict], path: Path) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(classes, f, indent=2, ensure_ascii=False)
+        f.write("\n")
 
 
 def sample_classes(events: list[dict], count: int, seed: int | None = None) -> list[dict]:
@@ -38,9 +57,19 @@ def format_recommendation(event: dict) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--live",
+        "--livemode",
+        action="store_true",
+        help="pull classes from the DMS site (and refresh the stored file) "
+        "instead of loading the stored ones",
+    )
     parser.add_argument("--count", type=int, default=20, help="classes to sample")
     parser.add_argument("--seed", type=int, default=None, help="seed for repeatable samples")
     parser.add_argument("--config", default="recommendations.yml")
+    parser.add_argument(
+        "--classes-file", type=Path, default=STORED_CLASSES_PATH, help="stored classes JSON"
+    )
     args = parser.parse_args(argv)
 
     api_key = os.environ.get("TYPESAFE_API_KEY")
@@ -56,7 +85,22 @@ def main(argv: list[str] | None = None) -> int:
     # Per-class scores and any batch failures are logged by the recommender.
     logging.basicConfig(stream=sys.stdout, level=logging.INFO, format="%(message)s")
 
-    events = parse_feed(fetch_feed())
+    if args.live:
+        events = select_classes(parse_feed(fetch_feed()))
+        save_stored_classes(events, args.classes_file)
+        print(f"Pulled {len(events)} classes from the site, saved to {args.classes_file}")
+    else:
+        try:
+            events = load_stored_classes(args.classes_file)
+        except (OSError, json.JSONDecodeError) as exc:
+            print(
+                f"Cannot load stored classes from {args.classes_file}: {exc}\n"
+                "Run with --live to pull them from the site.",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"Loaded {len(events)} stored classes from {args.classes_file}")
+
     total_classes = len(select_classes(events))
     sample = sample_classes(events, args.count, args.seed)
     print(f"Sampled {len(sample)} of {total_classes} classes with {config['model']}\n")
