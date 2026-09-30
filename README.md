@@ -69,7 +69,7 @@ TYPESAFE_API_KEY=... python -m scripts.sample_recommendations --count 20
 
 By default the classes come from the stored snapshot `scripts/stored_classes.json`, so
 repeated runs don't query the DMS site. Add `--live` to pull the current classes from
-the site instead (this also refreshes the stored file), and `--seed N` for a repeatable
+the site instead (the stored file is left as is), and `--seed N` for a repeatable
 sample. The sample is scored in a single batched Jev request; each class's score is
 printed, followed by the ones above the threshold.
 

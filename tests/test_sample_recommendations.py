@@ -25,6 +25,10 @@ def make_events(n_classes, n_other=3):
     return other + classes
 
 
+def write_classes(classes, path):
+    path.write_text(json.dumps(classes), encoding="utf-8")
+
+
 def fake_client(scores_by_title, default=0.1):
     def system_one(*, state, questions, model):
         return SimpleNamespace(
@@ -67,10 +71,10 @@ class TestFormatRecommendation:
 
 
 class TestStoredClasses:
-    def test_round_trip_preserves_unicode(self, tmp_path):
+    def test_loads_classes_with_unicode(self, tmp_path):
         path = tmp_path / "c.json"
         classes = [{"title": "Café — Basics", "categories": ["Class"]}]
-        script.save_stored_classes(classes, path)
+        write_classes(classes, path)
         assert script.load_stored_classes(path) == classes
 
     def test_tracked_stored_classes_are_valid(self):
@@ -100,7 +104,7 @@ class TestMain:
         return code, client, client_cls, fetch
 
     def test_default_uses_stored_classes_and_never_queries_site(self, classes_file, capsys):
-        script.save_stored_classes(make_events(3, n_other=0), classes_file)
+        write_classes(make_events(3, n_other=0), classes_file)
         scores = {"Class 0": 0.7, "Class 1": 0.2, "Class 2": 0.9}
         code, client, client_cls, fetch = self._run(classes_file, scores)
         out = capsys.readouterr().out
@@ -112,7 +116,7 @@ class TestMain:
         assert client_cls.call_args.kwargs["api_key"] == "k"
 
     def test_prints_only_recommended_sorted_by_score(self, classes_file, capsys):
-        script.save_stored_classes(make_events(3, n_other=0), classes_file)
+        write_classes(make_events(3, n_other=0), classes_file)
         scores = {"Class 0": 0.7, "Class 1": 0.2, "Class 2": 0.9}
         self._run(classes_file, scores)
         out = capsys.readouterr().out
@@ -122,7 +126,7 @@ class TestMain:
         assert "0.20" not in recommended_section
 
     def test_respects_count(self, classes_file):
-        script.save_stored_classes(make_events(30, n_other=0), classes_file)
+        write_classes(make_events(30, n_other=0), classes_file)
         _, client, _, _ = self._run(classes_file, argv=("--count", "5"))
         assert len(client.system_one.call_args.kwargs["questions"]) == 5
 
@@ -140,24 +144,30 @@ class TestMain:
         assert "--live" in capsys.readouterr().err
 
     def test_no_stored_classes_makes_no_calls(self, classes_file, capsys):
-        script.save_stored_classes([], classes_file)
+        write_classes([], classes_file)
         code, client, _, _ = self._run(classes_file)
         assert code == 0
         client.system_one.assert_not_called()
         assert "Sampled 0 of 0" in capsys.readouterr().out
 
     @pytest.mark.parametrize("flag", ["--live", "--livemode"])
-    def test_live_pulls_from_site_and_refreshes_stored_file(self, classes_file, capsys, flag):
-        script.save_stored_classes(make_events(1, n_other=0), classes_file)  # stale
+    def test_live_pulls_from_site_and_leaves_stored_file_untouched(
+        self, classes_file, capsys, flag
+    ):
+        write_classes(make_events(1, n_other=0), classes_file)
+        before = classes_file.read_text()
         feed = make_events(4, n_other=2)
         code, client, _, fetch = self._run(classes_file, argv=(flag,), feed_events=feed)
         out = capsys.readouterr().out
         assert code == 0
         fetch.assert_called_once()
         assert "Pulled 4 classes from the site" in out
-        stored = json.loads(classes_file.read_text())
-        assert [c["title"] for c in stored] == [f"Class {i}" for i in range(4)]  # classes only
-        assert len(client.system_one.call_args.kwargs["questions"]) == 4
+        assert len(client.system_one.call_args.kwargs["questions"]) == 4  # classes only
+        assert classes_file.read_text() == before
+
+    def test_live_does_not_create_stored_file(self, classes_file):
+        self._run(classes_file, argv=("--live",), feed_events=make_events(2))
+        assert not classes_file.exists()
 
     def test_missing_api_key_exits_1(self, monkeypatch, capsys):
         monkeypatch.delenv("TYPESAFE_API_KEY")

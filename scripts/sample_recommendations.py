@@ -5,7 +5,7 @@ stdout instead of sending them to Telegram.
 
 By default the classes come from a pre-stored JSON file, so repeated runs don't
 query the DMS site. Pass --live to pull the current classes from the site
-instead; that also refreshes the stored file.
+instead (the stored file is left untouched).
 
     TYPESAFE_API_KEY=... python -m scripts.sample_recommendations [--live] [--count 20] [--seed 1]
 """
@@ -37,12 +37,6 @@ def load_stored_classes(path: Path) -> list[dict]:
         return json.load(f)
 
 
-def save_stored_classes(classes: list[dict], path: Path) -> None:
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(classes, f, indent=2, ensure_ascii=False)
-        f.write("\n")
-
-
 def sample_classes(events: list[dict], count: int, seed: int | None = None) -> list[dict]:
     classes = select_classes(events)
     return random.Random(seed).sample(classes, min(count, len(classes)))
@@ -61,8 +55,7 @@ def main(argv: list[str] | None = None) -> int:
         "--live",
         "--livemode",
         action="store_true",
-        help="pull classes from the DMS site (and refresh the stored file) "
-        "instead of loading the stored ones",
+        help="pull classes from the DMS site instead of loading the stored ones",
     )
     parser.add_argument("--count", type=int, default=20, help="classes to sample")
     parser.add_argument("--seed", type=int, default=None, help="seed for repeatable samples")
@@ -87,8 +80,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.live:
         events = select_classes(parse_feed(fetch_feed()))
-        save_stored_classes(events, args.classes_file)
-        print(f"Pulled {len(events)} classes from the site, saved to {args.classes_file}")
+        print(f"Pulled {len(events)} classes from the site")
     else:
         try:
             events = load_stored_classes(args.classes_file)
